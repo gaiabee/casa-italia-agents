@@ -6,164 +6,202 @@ from typing import AsyncGenerator
 
 import anthropic
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-ROOM_AGENTS = {
-    "kitchen": {
-        "name": "Kitchen Agent",
-        "role": "La Cucina Specialist",
-        "emoji": "☕",
-        "system": "You are the Kitchen Agent for Casa Italia, a Tuscan farmhouse renovation. You passionately advocate for the kitchen budget. You speak with Italian flair, referencing authentic Tuscan cooking culture. Be specific about items: appliances, marble countertops, handmade tiles. Keep response to 2-3 sentences.",
-        "budget_share": 0.28,
-    },
-    "living": {
-        "name": "Living Room Agent",
-        "role": "Il Salotto Specialist",
-        "emoji": "🛋️",
-        "system": "You are the Living Room Agent for Casa Italia, a Tuscan farmhouse renovation. You advocate for creating a warm, inviting Italian living space. Reference specific items: linen sofas, Murano glass lamps, handwoven rugs, antique side tables. Keep response to 2-3 sentences.",
-        "budget_share": 0.35,
-    },
-    "bedroom": {
-        "name": "Bedroom Agent",
-        "role": "La Camera Specialist",
-        "emoji": "🌙",
-        "system": "You are the Bedroom Agent for Casa Italia, a Tuscan farmhouse renovation. You advocate for a serene, luxurious Italian bedroom. Reference specific items: Frette linens, blackout shutters, a reading armchair, artisan bedside lamps. Keep response to 2-3 sentences.",
-        "budget_share": 0.25,
-    },
-    "bathroom": {
-        "name": "Bathroom Agent",
-        "role": "Il Bagno Specialist",
-        "emoji": "🛁",
-        "system": "You are the Bathroom Agent for Casa Italia, a Tuscan farmhouse renovation. You advocate for a spa-like Italian bathroom. Reference specific items: travertine tiles, a rainfall shower, Salvatori stone accessories, heated towel rails. Keep response to 2-3 sentences.",
-        "budget_share": 0.12,
-    },
+ROOM_LABELS = {
+    "living": "Reception Room / Soggiorno",
+    "kitchen": "Kitchen / La Cucina",
+    "bedroom": "Master Bedroom / La Camera",
+    "bathroom": "Bathroom / Il Bagno",
+    "dining": "Dining Room / La Sala da Pranzo",
+    "terrace": "Terrace / La Terrazza",
 }
 
-DESIGN_MODE_DESCRIPTIONS = {
-    "rustic-italian": "Rustic Italian — favor artisan craftsmanship, terracotta, linen, and regionally sourced materials. Every piece should feel rooted in Tuscan tradition.",
-    "functional": "Functional — prioritize practicality, durability, and clean lines. Minimize decorative spending, maximize usability.",
-    "entertaining": "Entertaining — prioritize spaces for hosting guests. Invest in the kitchen and living areas. Create memorable shared spaces.",
-    "feng-shui": "Feng Shui — prioritize flow, natural light, and balance. Avoid clutter. Invest in quality over quantity.",
+DESIGN_MODES = {
+    "rustic-italian": "Rustic Italian — preserve original stone, terracotta, and beams; layer with linen, aged oak, and artisan ceramics",
+    "modern-minimal": "Modern Minimal — clean lines, neutral palette, hide structural elements behind plaster; Boffi kitchen, Poliform wardrobes",
+    "entertaining": "Grand Entertaining — maximise reception space, statement lighting, large dining table, hospitality-grade kitchen",
+    "feng-shui": "Feng Shui / Harmony — energy flow, natural materials, declutter, plants, water features, balanced yin/yang",
 }
 
 
-def ts() -> str:
+def _ts() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def call_claude(system: str, user: str, max_tokens: int = 150) -> str:
-    message = client.messages.create(
+def _msg(agent: str, role: str, content: str) -> dict:
+    return {"agent": agent, "role": role, "content": content, "ts": _ts()}
+
+
+def _call(system: str, user: str, max_tokens: int = 400) -> str:
+    resp = client.messages.create(
         model="claude-haiku-4-5",
         max_tokens=max_tokens,
-        messages=[{"role": "user", "content": user}],
         system=system,
+        messages=[{"role": "user", "content": user}],
     )
-    return message.content[0].text
+    return resp.content[0].text.strip()
+
+
+def _call_vision(system: str, user_text: str, pdf_b64: str, max_tokens: int = 600) -> str:
+    """Call Claude with a PDF document for vision analysis."""
+    resp = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=max_tokens,
+        system=system,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": pdf_b64,
+                        },
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            }
+        ],
+    )
+    return resp.content[0].text.strip()
 
 
 async def run_session(
-    design_mode: str, total_budget: int, rooms: list[str]
+    pdf_b64: str,
+    design_mode: str,
+    total_budget: int,
+    rooms: list[str],
 ) -> AsyncGenerator[dict, None]:
-    mode_desc = DESIGN_MODE_DESCRIPTIONS.get(
-        design_mode, DESIGN_MODE_DESCRIPTIONS["rustic-italian"]
+    mode_desc = DESIGN_MODES.get(design_mode, DESIGN_MODES["rustic-italian"])
+    room_names = [ROOM_LABELS.get(r, r.title()) for r in rooms]
+    budget_per_room = total_budget // len(rooms)
+
+    # ── PHASE 1: Space Planner analyses the PDF ──────────────────────────────
+    yield _msg("Space Planner", "analyst", "📐 Analysing property layout and spatial constraints from the brochure...")
+
+    property_summary = _call_vision(
+        system=(
+            "You are a professional space planner specialising in Italian rural properties. "
+            "Analyse the property brochure and extract: property name/location, total sqm, "
+            "key rooms and their approximate sizes, architectural features (stone walls, beams, "
+            "fireplaces, arches), current condition, and any spatial constraints. "
+            "Be specific and concise. Max 150 words."
+        ),
+        user_text=(
+            f"Analyse this property brochure. Focus on the following rooms: {', '.join(room_names)}. "
+            "Describe the spatial layout, architectural character, and what a designer would need to know."
+        ),
+        pdf_b64=pdf_b64,
+        max_tokens=300,
     )
 
-    # --- Space Planner ---
-    yield {
-        "agent": "Space Planner",
-        "role": "Tier 1 — Spatial Analyst",
-        "content": call_claude(
-            "You are the Space Planner for Casa Italia, a 180sqm Tuscan farmhouse. You analyze spatial flow and set constraints for room agents. Be concise — 2 sentences.",
-            f"Briefly assess the spatial priorities for this renovation. Design mode: {mode_desc}. Total budget: €{total_budget:,}. Rooms in scope: {', '.join(rooms)}.",
+    yield _msg("Space Planner", "analyst", f"🏛️ Property analysis complete: {property_summary}")
+
+    # ── PHASE 2: Style Agent sets the design brief ───────────────────────────
+    yield _msg("Style Agent", "designer", f"🎨 Establishing design brief: {mode_desc}")
+
+    style_brief = _call(
+        system=(
+            "You are a luxury Italian interior designer. Given a design mode and property description, "
+            "write a concise design brief (3 sentences max) covering: colour palette, key materials, "
+            "and the emotional atmosphere to create. Be specific to Italian craftsmanship."
         ),
-        "ts": ts(),
-    }
+        user_text=f"Design mode: {mode_desc}\nProperty: {property_summary}\nWrite the design brief.",
+        max_tokens=200,
+    )
 
-    # --- Style Agent ---
-    yield {
-        "agent": "Style Agent",
-        "role": "Tier 1 — Design Director",
-        "content": call_claude(
-            "You are the Style Agent for Casa Italia. You set the cross-room design language that all room agents must follow. Be specific about palette, materials, and mood. 2 sentences.",
-            f"Set the design language for this renovation. Design mode: {mode_desc}.",
-        ),
-        "ts": ts(),
-    }
+    yield _msg("Style Agent", "designer", f"✨ Design brief: {style_brief}")
 
-    # --- Room Agents propose budgets ---
-    room_requests: dict[str, int] = {}
-    for room_key in rooms:
-        if room_key not in ROOM_AGENTS:
-            continue
-        agent = ROOM_AGENTS[room_key]
-        requested = int(total_budget * agent["budget_share"])
-        room_requests[room_key] = requested
+    # ── PHASE 3: Room Agents propose budgets ─────────────────────────────────
+    room_proposals: dict[str, dict] = {}
 
-        content = call_claude(
-            agent["system"],
-            f"Argue for your budget allocation of €{requested:,} out of the total €{total_budget:,} budget. Design mode: {mode_desc}. Be passionate and specific.",
+    for room_key, room_name in zip(rooms, room_names):
+        yield _msg(f"{room_name} Agent", "room-agent", f"💬 Analysing {room_name} and preparing budget proposal...")
+
+        proposal_text = _call_vision(
+            system=(
+                f"You are the dedicated agent for the {room_name} in an Italian farmhouse renovation. "
+                f"Your design brief is: {style_brief}. "
+                "Propose a budget allocation and list 4-5 specific furniture/decor items with Italian vendors and prices in EUR. "
+                "Format: start with your budget ask, then list items as '• Item — Vendor — €price — one-line reason'. "
+                "Be specific and realistic. Max 200 words."
+            ),
+            user_text=(
+                f"Property context: {property_summary}\n"
+                f"Total budget for all rooms: €{total_budget}. Suggested per room: €{budget_per_room}.\n"
+                f"Propose your budget for {room_name} and list your top items."
+            ),
+            pdf_b64=pdf_b64,
+            max_tokens=350,
         )
-        yield {
-            "agent": agent["name"],
-            "role": agent["role"],
-            "content": f"{agent['emoji']} Requesting €{requested:,} — {content}",
-            "ts": ts(),
-        }
 
-    # --- Budget Manager flags conflicts ---
-    total_requested = sum(room_requests.values())
-    over_by = total_requested - total_budget
-    bm_prompt = f"Total requested: €{total_requested:,}. Total budget: €{total_budget:,}. {'Over budget by €' + str(over_by) + '.' if over_by > 0 else 'Within budget.'} Rooms: {', '.join(f'{k}: €{v:,}' for k, v in room_requests.items())}. Flag the conflict and suggest cuts. 2-3 sentences."
+        room_proposals[room_key] = {"name": room_name, "proposal": proposal_text}
+        yield _msg(f"{room_name} Agent", "room-agent", f"📋 {room_name} proposal:\n{proposal_text}")
 
-    yield {
-        "agent": "Budget Manager",
-        "role": "Neutral Referee",
-        "content": call_claude(
-            "You are the Budget Manager for Casa Italia. You track the global budget pool and flag conflicts when room agents overspend. Be direct and analytical. 2-3 sentences.",
-            bm_prompt,
-        ),
-        "ts": ts(),
-    }
+    # ── PHASE 4: Budget Manager flags conflicts ───────────────────────────────
+    yield _msg("Budget Manager", "budget", f"💰 Reviewing all proposals against total budget of €{total_budget:,}...")
 
-    # --- Master Designer final ruling ---
-    room_summary = ". ".join(
-        f"{ROOM_AGENTS[r]['name']} requested €{room_requests[r]:,}"
-        for r in rooms
-        if r in ROOM_AGENTS
+    all_proposals = "\n\n".join(
+        [f"=== {v['name']} ===\n{v['proposal']}" for v in room_proposals.values()]
     )
-    final_allocations = {
-        r: int(total_budget * ROOM_AGENTS[r]["budget_share"] * (total_budget / max(total_requested, 1)))
-        for r in rooms
-        if r in ROOM_AGENTS
-    }
 
-    yield {
-        "agent": "Master Designer",
-        "role": "Final Arbitrator",
-        "content": call_claude(
-            "You are the Master Designer for Casa Italia — the final arbitrator. You review all agent proposals and issue binding decisions. Be authoritative and decisive. 3 sentences max.",
-            f"Issue your final ruling. {room_summary}. Design mode: {mode_desc}. Total budget: €{total_budget:,}. Allocate fairly and justify your decision.",
-            max_tokens=200,
+    budget_review = _call(
+        system=(
+            "You are a strict budget manager for a luxury Italian renovation. "
+            "Review all room proposals and identify: which rooms are over budget, "
+            "which items should be cut or deferred, and what the total projected spend is. "
+            "Be direct and specific. Max 150 words."
         ),
-        "ts": ts(),
-    }
+        user_text=f"Total budget: €{total_budget:,}\n\nRoom proposals:\n{all_proposals}\n\nProvide your budget review.",
+        max_tokens=250,
+    )
 
-    # --- Final result summary ---
-    approved_items_by_room = {
-        "kitchen": ["Smeg refrigerator", "Bertazzoni range", "Marble backsplash", "Handmade ceramic tiles", "Espresso station"],
-        "living": ["Flexform linen sofa", "Flos floor lamp", "Handwoven Sardinian rug", "Antique side tables", "Botanical prints"],
-        "bedroom": ["Frette duvet set", "Busatti blackout curtains", "Flos bedside lamps", "Poltrona Frau armchair", "Magniflex mattress topper"],
-        "bathroom": ["Travertine floor tiles", "Gessi rainfall shower", "Salvatori stone accessories", "Scirocco towel warmer", "Frette towels"],
-    }
+    yield _msg("Budget Manager", "budget", f"⚠️ Budget review: {budget_review}")
 
-    yield {
-        "agent": "System",
-        "role": "Session Complete",
-        "content": "Design session complete. All agents have reached consensus.",
-        "ts": ts(),
-        "meta": {
-            "final_allocations": final_allocations,
-            "approved_items": {r: approved_items_by_room.get(r, []) for r in rooms if r in ROOM_AGENTS},
-            "total_approved": sum(final_allocations.values()),
-        },
-    }
+    # ── PHASE 5: Master Designer gives final ruling ───────────────────────────
+    yield _msg("Master Designer", "master", "👑 Deliberating final design decisions...")
+
+    final_ruling = _call(
+        system=(
+            "You are the Master Designer — the final authority on this Italian farmhouse renovation. "
+            "Review the room proposals and budget review. Give your final ruling: "
+            "which items are approved, which are cut, and why. "
+            "End with a one-sentence vision statement for the finished property. "
+            "Max 200 words."
+        ),
+        user_text=(
+            f"Design brief: {style_brief}\n\n"
+            f"Room proposals:\n{all_proposals}\n\n"
+            f"Budget review: {budget_review}\n\n"
+            "Give your final ruling."
+        ),
+        max_tokens=300,
+    )
+
+    yield _msg("Master Designer", "master", f"✅ Final ruling: {final_ruling}")
+
+    # ── PHASE 6: Emit structured results ─────────────────────────────────────
+    # Build a simple budget allocation per room
+    allocations = []
+    per_room = total_budget // len(rooms)
+    remainder = total_budget - (per_room * len(rooms))
+    for i, (room_key, room_name) in enumerate(zip(rooms, room_names)):
+        alloc = per_room + (remainder if i == 0 else 0)
+        allocations.append({"room": room_name, "allocated": alloc})
+
+    yield _msg(
+        "System",
+        "result",
+        json.dumps({
+            "type": "session_complete",
+            "property_summary": property_summary,
+            "style_brief": style_brief,
+            "budget_allocations": allocations,
+            "final_ruling": final_ruling,
+            "total_budget": total_budget,
+            "design_mode": design_mode,
+        }),
+    )
