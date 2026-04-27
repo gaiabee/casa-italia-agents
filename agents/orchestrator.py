@@ -236,7 +236,7 @@ async def run_session(
 
     yield _msg("BM", "Budget Manager", "budget",
                f"💰 Total requested: €{total_asked:,} vs budget {budget_fmt} — "
-               f"{'over by €' + str(abs(over_under):,) if over_under > 0 else 'within budget'}. Reviewing...")
+               f"{'over by €' + f'{abs(over_under):,}' if over_under > 0 else 'within budget'}. Reviewing...")
 
     budget_review = _call(
         system=(
