@@ -305,7 +305,7 @@ async def run_session(
             "Italian vendors to use, and the emotional atmosphere to create. "
             "Be specific, opinionated, and reference the property's architectural features."
         ),
-        user_text=(
+        user=(
             f"Design style: {style['label']}\n"
             f"Palette: {style['palette']}\n"
             f"Materials: {style['materials']}\n"
@@ -335,7 +335,7 @@ async def run_session(
                 "with vendor and price. Start with your total ask and why this room deserves it. "
                 "Be direct and specific. Max 160 words."
             ),
-            user_text=(
+            user=(
                 f"Property: {property_summary[:220]}\n"
                 f"Total project budget: {budget_fmt}. "
                 f"Make your case for €{ask_amt:,} for the {room['name']}."
@@ -370,7 +370,7 @@ async def run_session(
             "and propose a revised allocation that fits within the total budget. "
             "Be blunt. Push back on over-spending. Max 180 words."
         ),
-        user_text=(
+        user=(
             f"Total budget: {budget_fmt}\n"
             f"Total requested: €{total_asked:,} (over by €{max(0, over_by):,})\n\n"
             f"{all_proposals_text}\n\n"
@@ -390,7 +390,7 @@ async def run_session(
             "Explain why cutting them would compromise the entire design vision. "
             "Be specific and passionate. Max 120 words."
         ),
-        user_text=(
+        user=(
             f"Budget Manager review: {budget_review}\n\n"
             f"Your original proposal for {top_room['name']}: {room_proposals[top_room['id']]['proposal'][:300]}\n\n"
             "Defend your position."
@@ -412,7 +412,7 @@ async def run_session(
             "and state 1 item cut per room with a clear reason. "
             "End with a single sentence vision for the finished property. Max 250 words."
         ),
-        user_text=(
+        user=(
             f"Design brief: {style_brief}\n\n"
             f"Total budget: {budget_fmt}\n\n"
             f"Room proposals:\n{all_proposals_text}\n\n"
@@ -440,7 +440,7 @@ async def run_session(
                 '"price" (integer in EUR, realistic for luxury), "category" (e.g. Seating, Lighting, Storage, Textiles). '
                 "No markdown, no explanation, just the JSON array."
             ),
-            user_text=(
+            user=(
                 f"Room: {room['name']}\n"
                 f"Room budget: €{room_budget:,}\n"
                 f"Style: {style['label']}\n"
